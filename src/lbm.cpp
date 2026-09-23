@@ -35,6 +35,7 @@ namespace
     constexpr std::uint32_t kHeight = 32;
     constexpr std::uint32_t kDepth = 32;
     constexpr std::uint32_t kDirections = 19;
+    constexpr std::uint32_t kSteps = 200;
     constexpr float kInitialVelocity = 0.04F;
     constexpr float kRelaxation = 1.0F;
     constexpr std::uint32_t kWorkgroupSize = 4;
@@ -349,6 +350,7 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
     int configuredWidth = 0;
     int configuredHeight = 0;
     std::uint32_t step = 0;
+    bool completionReported = false;
     const auto groupsX = (kWidth + kWorkgroupSize - 1) / kWorkgroupSize;
     const auto groupsY = (kHeight + kWorkgroupSize - 1) / kWorkgroupSize;
     const auto groupsZ = (kDepth + kWorkgroupSize - 1) / kWorkgroupSize;
@@ -390,13 +392,17 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
         WGPUCommandEncoderDescriptor encoderDesc{};
         WgpuHandle<WGPUCommandEncoder, wgpuCommandEncoderRelease> encoder{
             wgpuDeviceCreateCommandEncoder(device, &encoderDesc)};
-        WGPUComputePassDescriptor computeDesc{};
-        WGPUComputePassEncoder compute = wgpuCommandEncoderBeginComputePass(encoder.get(), &computeDesc);
-        wgpuComputePassEncoderSetPipeline(compute, pipeline.get());
-        wgpuComputePassEncoderSetBindGroup(compute, 0, (step % 2 == 0) ? bindGroupAB.get() : bindGroupBA.get(), 0, nullptr);
-        wgpuComputePassEncoderDispatchWorkgroups(compute, groupsX, groupsY, groupsZ);
-        wgpuComputePassEncoderEnd(compute);
-        wgpuComputePassEncoderRelease(compute);
+        if (step < kSteps)
+        {
+            WGPUComputePassDescriptor computeDesc{};
+            WGPUComputePassEncoder compute = wgpuCommandEncoderBeginComputePass(encoder.get(), &computeDesc);
+            require_handle(compute, "compute pass");
+            wgpuComputePassEncoderSetPipeline(compute, pipeline.get());
+            wgpuComputePassEncoderSetBindGroup(compute, 0, (step % 2 == 0) ? bindGroupAB.get() : bindGroupBA.get(), 0, nullptr);
+            wgpuComputePassEncoderDispatchWorkgroups(compute, groupsX, groupsY, groupsZ);
+            wgpuComputePassEncoderEnd(compute);
+            wgpuComputePassEncoderRelease(compute);
+        }
 
         WGPURenderPassColorAttachment attachment{};
         attachment.view = view.get();
@@ -408,8 +414,10 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
         renderDesc.colorAttachments = &attachment;
         WGPURenderPassEncoder render = wgpuCommandEncoderBeginRenderPass(encoder.get(), &renderDesc);
         wgpuRenderPassEncoderSetPipeline(render, renderPipeline.get());
-        // After the step, even steps wrote B and odd steps wrote A.
-        wgpuRenderPassEncoderSetBindGroup(render, 0, (step % 2 == 0) ? renderGroupB.get() : renderGroupA.get(), 0, nullptr);
+        // During simulation, even steps write B and odd steps write A. Once
+        // all steps are done, keep presenting the final buffer until close.
+        const bool currentIsB = (step < kSteps) ? (step % 2 == 0) : (kSteps % 2 == 1);
+        wgpuRenderPassEncoderSetBindGroup(render, 0, currentIsB ? renderGroupB.get() : renderGroupA.get(), 0, nullptr);
         wgpuRenderPassEncoderDraw(render, 3, 1, 0, 0);
         wgpuRenderPassEncoderEnd(render);
         wgpuRenderPassEncoderRelease(render);
@@ -422,7 +430,14 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
 #if defined(WEBGPU_BACKEND_WGPU)
         wgpuDevicePoll(device, false, nullptr);
 #endif
-        ++step;
+        if (step < kSteps)
+            ++step;
+        if (step == kSteps && !completionReported)
+        {
+            std::cout << "LBM D3Q19: " << kWidth << 'x' << kHeight << 'x' << kDepth
+                      << ", " << kSteps << " GPU iterations submitted; displaying final field.\n" << std::flush;
+            completionReported = true;
+        }
     }
     wait_for_queue(device, queue.get());
     wgpuSurfaceUnconfigure(surface);
