@@ -446,10 +446,10 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
         attachment.loadOp = WGPULoadOp_Clear;
         attachment.storeOp = WGPUStoreOp_Store;
         attachment.clearValue = WGPUColor{0.0, 0.0, 0.0, 1.0};
-        WGPURenderPassDescriptor renderDesc{};
-        renderDesc.colorAttachmentCount = 1;
-        renderDesc.colorAttachments = &attachment;
-        WGPURenderPassEncoder render = wgpuCommandEncoderBeginRenderPass(encoder.get(), &renderDesc);
+        WGPURenderPassDescriptor renderPassDesc{};
+        renderPassDesc.colorAttachmentCount = 1;
+        renderPassDesc.colorAttachments = &attachment;
+        WGPURenderPassEncoder render = wgpuCommandEncoderBeginRenderPass(encoder.get(), &renderPassDesc);
         wgpuRenderPassEncoderSetPipeline(render, renderPipeline.get());
         wgpuRenderPassEncoderSetBindGroup(render, 0, textureGroup.get(), 0, nullptr);
         wgpuRenderPassEncoderDraw(render, 3, 1, 0, 0);
