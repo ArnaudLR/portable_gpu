@@ -1,5 +1,10 @@
 #include "lbm.h"
 #include <gpu.h>
+#if defined(WEBGPU_BACKEND_WGPU)
+// wgpu-native extensions (wgpuDevicePoll, ...). This header is only shipped by
+// the wgpu-native distribution, so it must not be included with Dawn/Emscripten.
+#include <webgpu/wgpu.h>
+#endif
 
 #include <array>
 #include <cstddef>
@@ -126,22 +131,34 @@ namespace
             throw std::runtime_error(std::string("Failed to create WebGPU ") + resource);
     }
 
-    void wait_for_queue(WGPUQueue queue)
+    // Blocks until every command already submitted to `queue` has finished on the GPU.
+    void wait_for_queue([[maybe_unused]] WGPUDevice device, WGPUQueue queue)
     {
         WGPUQueueWorkDoneStatus completion = WGPUQueueWorkDoneStatus_Unknown;
         WGPUQueueWorkDoneCallbackInfo callbackInfo{};
-        callbackInfo.mode = WGPUCallbackMode_WaitAnyOnly;
         callbackInfo.userdata1 = &completion;
         callbackInfo.callback = [](WGPUQueueWorkDoneStatus status, void* userdata1, void*) {
             *static_cast<WGPUQueueWorkDoneStatus*>(userdata1) = status;
         };
 
-        const WGPUFuture future = wgpuQueueOnSubmittedWorkDone(queue, callbackInfo);
+#if defined(WEBGPU_BACKEND_WGPU)
+        // wgpu-native (v24.0.0.2) does not implement wgpuInstanceWaitAny: calling it
+        // aborts the process with a "not implemented" panic. Its native extension
+        // wgpuDevicePoll(wait = true) blocks until all submitted work has completed
+        // and fires the pending work-done callbacks before returning.
+        callbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
+        wgpuQueueOnSubmittedWorkDone(queue, callbackInfo);
+        wgpuDevicePoll(device, /*wait=*/true, nullptr);
+#else
+        callbackInfo.mode = WGPUCallbackMode_WaitAnyOnly;
         WGPUFutureWaitInfo waitInfo{};
-        waitInfo.future = future;
+        waitInfo.future = wgpuQueueOnSubmittedWorkDone(queue, callbackInfo);
         const auto waitStatus = wgpuInstanceWaitAny(ame::gpu::Instance::get(), 1, &waitInfo, std::numeric_limits<std::uint64_t>::max());
-        if (waitStatus != WGPUWaitStatus_Success || !waitInfo.completed ||
-            completion != WGPUQueueWorkDoneStatus_Success)
+        if (waitStatus != WGPUWaitStatus_Success || !waitInfo.completed)
+            throw std::runtime_error("wgpuInstanceWaitAny failed while waiting for the LBM submission");
+#endif
+
+        if (completion != WGPUQueueWorkDoneStatus_Success)
             throw std::runtime_error("WebGPU LBM submission did not complete successfully");
     }
 }
@@ -153,7 +170,7 @@ void run_lbm_simulation(WGPUDevice device)
 
     const auto cellCount = static_cast<std::size_t>(kWidth) * kHeight * kDepth;
     const auto populationCount = cellCount * kDirections;
-    const auto populationBytes = static_cast<WGPUBufferSize>(populationCount * sizeof(float));
+    const auto populationBytes = static_cast<std::uint64_t>(populationCount * sizeof(float));
     const auto initial = make_initial_populations();
     const auto shaderCode = load_shader();
 
@@ -275,7 +292,7 @@ void run_lbm_simulation(WGPUDevice device)
     require_handle(commandBuffer.get(), "command buffer");
     const WGPUCommandBuffer submittedCommand = commandBuffer.get();
     wgpuQueueSubmit(queue.get(), 1, &submittedCommand);
-    wait_for_queue(queue.get());
+    wait_for_queue(device, queue.get());
 
     std::cout << "LBM D3Q19: " << kWidth << 'x' << kHeight << 'x' << kDepth
               << ", " << kSteps << " GPU steps submitted (BGK, bounce-back walls and sphere).\n";
