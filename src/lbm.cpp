@@ -271,37 +271,23 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
     auto bindGroupAB = create_bind_group(populationsA.get(), populationsB.get());
     auto bindGroupBA = create_bind_group(populationsB.get(), populationsA.get());
 
-    // The render pipeline binds the current ping-pong population buffer as
-    // read-only storage. Compute and rendering are encoded in the same command
-    // buffer, so WebGPU inserts the required storage-buffer transition.
-    std::array<WGPUBindGroupLayoutEntry, 2> renderLayoutEntries{};
-    renderLayoutEntries[0].binding = 0;
-    renderLayoutEntries[0].visibility = WGPUShaderStage_Fragment;
-    renderLayoutEntries[0].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
-    renderLayoutEntries[0].buffer.minBindingSize = populationBytes;
-    renderLayoutEntries[1].binding = 1;
-    renderLayoutEntries[1].visibility = WGPUShaderStage_Fragment;
-    renderLayoutEntries[1].buffer.type = WGPUBufferBindingType_Uniform;
-    renderLayoutEntries[1].buffer.minBindingSize = sizeof(parameters);
-    WGPUBindGroupLayoutDescriptor renderLayoutDesc{};
-    renderLayoutDesc.entryCount = renderLayoutEntries.size();
-    renderLayoutDesc.entries = renderLayoutEntries.data();
-    WgpuHandle<WGPUBindGroupLayout, wgpuBindGroupLayoutRelease> renderLayout{
-        wgpuDeviceCreateBindGroupLayout(device, &renderLayoutDesc)};
-    require_handle(renderLayout.get(), "visualization bind group layout");
-
-    const auto make_render_group = [&](WGPUBuffer populations) {
-        std::array<WGPUBindGroupEntry, 2> entries{};
-        entries[0].binding = 0; entries[0].buffer = populations; entries[0].size = populationBytes;
-        entries[1].binding = 1; entries[1].buffer = parameterBuffer.get(); entries[1].size = sizeof(parameters);
-        WGPUBindGroupDescriptor desc{};
-        desc.layout = renderLayout.get(); desc.entryCount = entries.size(); desc.entries = entries.data();
-        WgpuHandle<WGPUBindGroup, wgpuBindGroupRelease> result{wgpuDeviceCreateBindGroup(device, &desc)};
-        require_handle(result.get(), "visualization bind group");
-        return result;
-    };
-    auto renderGroupA = make_render_group(populationsA.get());
-    auto renderGroupB = make_render_group(populationsB.get());
+    // Convert the population buffer to a small GPU texture in a compute pass.
+    // The graphics pipeline only samples that texture; this avoids compiling
+    // storage-buffer ray marching in the fragment stage on older Intel drivers.
+    WGPUTextureDescriptor projectionDesc{};
+    projectionDesc.usage = WGPUTextureUsage_StorageBinding | WGPUTextureUsage_TextureBinding;
+    projectionDesc.dimension = WGPUTextureDimension_2D;
+    projectionDesc.size = WGPUExtent3D{kWidth, kHeight, 1};
+    projectionDesc.format = WGPUTextureFormat_RGBA8Unorm;
+    projectionDesc.mipLevelCount = 1;
+    projectionDesc.sampleCount = 1;
+    WgpuHandle<WGPUTexture, wgpuTextureRelease> projection{
+        wgpuDeviceCreateTexture(device, &projectionDesc)};
+    require_handle(projection.get(), "projection texture");
+    WGPUTextureViewDescriptor projectionViewDesc{};
+    WgpuHandle<WGPUTextureView, wgpuTextureViewRelease> projectionView{
+        wgpuTextureCreateView(projection.get(), &projectionViewDesc)};
+    require_handle(projectionView.get(), "projection texture view");
 
     WGPUShaderSourceWGSL visualSource{};
     visualSource.chain.sType = WGPUSType_ShaderSourceWGSL;
@@ -312,40 +298,69 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
         wgpuDeviceCreateShaderModule(device, &visualShaderDesc)};
     require_handle(visualShader.get(), "visualization shader");
 
-    WGPUSurfaceCapabilities capabilities{};
-    wgpuSurfaceGetCapabilities(surface, adapter, &capabilities);
-    if (capabilities.formatCount == 0)
-        throw std::runtime_error("Surface exposes no texture format");
-    const WGPUTextureFormat surfaceFormat = capabilities.formats[0];
-    wgpuSurfaceCapabilitiesFreeMembers(capabilities);
+    std::array<WGPUBindGroupLayoutEntry, 3> projectEntries{};
+    projectEntries[0].binding=0; projectEntries[0].visibility=WGPUShaderStage_Compute;
+    projectEntries[0].buffer.type=WGPUBufferBindingType_ReadOnlyStorage; projectEntries[0].buffer.minBindingSize=populationBytes;
+    projectEntries[1].binding=1; projectEntries[1].visibility=WGPUShaderStage_Compute;
+    projectEntries[1].buffer.type=WGPUBufferBindingType_Uniform; projectEntries[1].buffer.minBindingSize=sizeof(parameters);
+    projectEntries[2].binding=2; projectEntries[2].visibility=WGPUShaderStage_Compute;
+    projectEntries[2].storageTexture.access=WGPUStorageTextureAccess_WriteOnly;
+    projectEntries[2].storageTexture.format=WGPUTextureFormat_RGBA8Unorm;
+    projectEntries[2].storageTexture.viewDimension=WGPUTextureViewDimension_2D;
+    WGPUBindGroupLayoutDescriptor projectLayoutDesc{};
+    projectLayoutDesc.entryCount=projectEntries.size(); projectLayoutDesc.entries=projectEntries.data();
+    WgpuHandle<WGPUBindGroupLayout, wgpuBindGroupLayoutRelease> projectLayout{
+        wgpuDeviceCreateBindGroupLayout(device,&projectLayoutDesc)};
+    const WGPUBindGroupLayout projectLayouts[]={projectLayout.get()};
+    WGPUPipelineLayoutDescriptor projectPipelineLayoutDesc{};
+    projectPipelineLayoutDesc.bindGroupLayoutCount=1; projectPipelineLayoutDesc.bindGroupLayouts=projectLayouts;
+    WgpuHandle<WGPUPipelineLayout, wgpuPipelineLayoutRelease> projectPipelineLayout{
+        wgpuDeviceCreatePipelineLayout(device,&projectPipelineLayoutDesc)};
+    WGPUComputePipelineDescriptor projectPipelineDesc{};
+    projectPipelineDesc.layout=projectPipelineLayout.get(); projectPipelineDesc.compute.module=visualShader.get();
+    projectPipelineDesc.compute.entryPoint=WGPUStringView{"project",7};
+    WgpuHandle<WGPUComputePipeline, wgpuComputePipelineRelease> projectPipeline{
+        wgpuDeviceCreateComputePipeline(device,&projectPipelineDesc)};
+    require_handle(projectPipeline.get(), "projection compute pipeline");
+    const auto makeProjectGroup=[&](WGPUBuffer buffer){
+        std::array<WGPUBindGroupEntry,3> e{};
+        e[0].binding=0;e[0].buffer=buffer;e[0].size=populationBytes;
+        e[1].binding=1;e[1].buffer=parameterBuffer.get();e[1].size=sizeof(parameters);
+        e[2].binding=2;e[2].textureView=projectionView.get();
+        WGPUBindGroupDescriptor d{};d.layout=projectLayout.get();d.entryCount=e.size();d.entries=e.data();
+        WgpuHandle<WGPUBindGroup,wgpuBindGroupRelease> g{wgpuDeviceCreateBindGroup(device,&d)};
+        require_handle(g.get(),"projection bind group");return g;};
+    auto projectGroupA=makeProjectGroup(populationsA.get()); auto projectGroupB=makeProjectGroup(populationsB.get());
 
-    const WGPUBindGroupLayout renderLayouts[] = {renderLayout.get()};
-    WGPUPipelineLayoutDescriptor renderPipelineLayoutDesc{};
-    renderPipelineLayoutDesc.bindGroupLayoutCount = 1;
-    renderPipelineLayoutDesc.bindGroupLayouts = renderLayouts;
-    WgpuHandle<WGPUPipelineLayout, wgpuPipelineLayoutRelease> renderPipelineLayout{
-        wgpuDeviceCreatePipelineLayout(device, &renderPipelineLayoutDesc)};
-    WGPUColorTargetState colorTarget{};
-    colorTarget.format = surfaceFormat;
-    colorTarget.writeMask = WGPUColorWriteMask_All;
-    WGPUFragmentState fragment{};
-    fragment.module = visualShader.get();
-    fragment.entryPoint = WGPUStringView{"fragment_main", 13};
-    fragment.targetCount = 1;
-    fragment.targets = &colorTarget;
-    WGPURenderPipelineDescriptor renderPipelineDesc{};
-    renderPipelineDesc.layout = renderPipelineLayout.get();
-    renderPipelineDesc.vertex.module = visualShader.get();
-    renderPipelineDesc.vertex.entryPoint = WGPUStringView{"vertex_main", 11};
-    renderPipelineDesc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
-    renderPipelineDesc.primitive.frontFace = WGPUFrontFace_CCW;
-    renderPipelineDesc.primitive.cullMode = WGPUCullMode_None;
-    renderPipelineDesc.multisample.count = 1;
-    renderPipelineDesc.multisample.mask = ~0u;
-    renderPipelineDesc.fragment = &fragment;
-    WgpuHandle<WGPURenderPipeline, wgpuRenderPipelineRelease> renderPipeline{
-        wgpuDeviceCreateRenderPipeline(device, &renderPipelineDesc)};
-    require_handle(renderPipeline.get(), "visualization render pipeline");
+    std::array<WGPUBindGroupLayoutEntry,2> textureEntries{};
+    textureEntries[0].binding=0;textureEntries[0].visibility=WGPUShaderStage_Fragment;
+    textureEntries[0].texture.sampleType=WGPUTextureSampleType_Float;textureEntries[0].texture.viewDimension=WGPUTextureViewDimension_2D;
+    textureEntries[1].binding=1;textureEntries[1].visibility=WGPUShaderStage_Fragment;
+    textureEntries[1].sampler.type=WGPUSamplerBindingType_Filtering;
+    WGPUBindGroupLayoutDescriptor textureLayoutDesc{};textureLayoutDesc.entryCount=textureEntries.size();textureLayoutDesc.entries=textureEntries.data();
+    WgpuHandle<WGPUBindGroupLayout,wgpuBindGroupLayoutRelease> textureLayout{wgpuDeviceCreateBindGroupLayout(device,&textureLayoutDesc)};
+    WGPUSamplerDescriptor samplerDesc{};samplerDesc.magFilter=WGPUFilterMode_Linear;samplerDesc.minFilter=WGPUFilterMode_Linear;
+    WgpuHandle<WGPUSampler,wgpuSamplerRelease> sampler{wgpuDeviceCreateSampler(device,&samplerDesc)};
+    std::array<WGPUBindGroupEntry,2> textureGroupEntries{};
+    textureGroupEntries[0].binding=0;textureGroupEntries[0].textureView=projectionView.get();
+    textureGroupEntries[1].binding=1;textureGroupEntries[1].sampler=sampler.get();
+    WGPUBindGroupDescriptor textureGroupDesc{};textureGroupDesc.layout=textureLayout.get();textureGroupDesc.entryCount=2;textureGroupDesc.entries=textureGroupEntries.data();
+    WgpuHandle<WGPUBindGroup,wgpuBindGroupRelease> textureGroup{wgpuDeviceCreateBindGroup(device,&textureGroupDesc)};
+
+    WGPUSurfaceCapabilities capabilities{}; wgpuSurfaceGetCapabilities(surface,adapter,&capabilities);
+    if(capabilities.formatCount==0) throw std::runtime_error("Surface exposes no texture format");
+    const WGPUTextureFormat surfaceFormat=capabilities.formats[0]; wgpuSurfaceCapabilitiesFreeMembers(capabilities);
+    const WGPUBindGroupLayout renderLayouts[]={projectLayout.get(),textureLayout.get()};
+    WGPUPipelineLayoutDescriptor renderLayoutDesc{};renderLayoutDesc.bindGroupLayoutCount=2;renderLayoutDesc.bindGroupLayouts=renderLayouts;
+    WgpuHandle<WGPUPipelineLayout,wgpuPipelineLayoutRelease> renderPipelineLayout{wgpuDeviceCreatePipelineLayout(device,&renderLayoutDesc)};
+    WGPUColorTargetState target{};target.format=surfaceFormat;target.writeMask=WGPUColorWriteMask_All;
+    WGPUFragmentState fragment{};fragment.module=visualShader.get();fragment.entryPoint=WGPUStringView{"fragment_main",13};fragment.targetCount=1;fragment.targets=&target;
+    WGPURenderPipelineDescriptor renderDesc{};renderDesc.layout=renderPipelineLayout.get();renderDesc.vertex.module=visualShader.get();
+    renderDesc.vertex.entryPoint=WGPUStringView{"vertex_main",11};renderDesc.primitive.topology=WGPUPrimitiveTopology_TriangleList;
+    renderDesc.primitive.frontFace=WGPUFrontFace_CCW;renderDesc.primitive.cullMode=WGPUCullMode_None;
+    renderDesc.multisample.count=1;renderDesc.multisample.mask=~0u;renderDesc.fragment=&fragment;
+    WgpuHandle<WGPURenderPipeline,wgpuRenderPipelineRelease> renderPipeline{wgpuDeviceCreateRenderPipeline(device,&renderDesc)};
+    require_handle(renderPipeline.get(),"visualization render pipeline");
 
     int configuredWidth = 0;
     int configuredHeight = 0;
@@ -404,6 +419,16 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
             wgpuComputePassEncoderRelease(compute);
         }
 
+        WGPUComputePassDescriptor projectionPassDesc{};
+        WGPUComputePassEncoder projectionPass = wgpuCommandEncoderBeginComputePass(encoder.get(), &projectionPassDesc);
+        require_handle(projectionPass, "projection compute pass");
+        wgpuComputePassEncoderSetPipeline(projectionPass, projectPipeline.get());
+        const bool currentIsB = (step < kSteps) ? (step % 2 == 0) : (kSteps % 2 == 1);
+        wgpuComputePassEncoderSetBindGroup(projectionPass, 0, currentIsB ? projectGroupB.get() : projectGroupA.get(), 0, nullptr);
+        wgpuComputePassEncoderDispatchWorkgroups(projectionPass, (kWidth + 7) / 8, (kHeight + 7) / 8, 1);
+        wgpuComputePassEncoderEnd(projectionPass);
+        wgpuComputePassEncoderRelease(projectionPass);
+
         WGPURenderPassColorAttachment attachment{};
         attachment.view = view.get();
         attachment.loadOp = WGPULoadOp_Clear;
@@ -414,10 +439,7 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
         renderDesc.colorAttachments = &attachment;
         WGPURenderPassEncoder render = wgpuCommandEncoderBeginRenderPass(encoder.get(), &renderDesc);
         wgpuRenderPassEncoderSetPipeline(render, renderPipeline.get());
-        // During simulation, even steps write B and odd steps write A. Once
-        // all steps are done, keep presenting the final buffer until close.
-        const bool currentIsB = (step < kSteps) ? (step % 2 == 0) : (kSteps % 2 == 1);
-        wgpuRenderPassEncoderSetBindGroup(render, 0, currentIsB ? renderGroupB.get() : renderGroupA.get(), 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(render, 1, textureGroup.get(), 0, nullptr);
         wgpuRenderPassEncoderDraw(render, 3, 1, 0, 0);
         wgpuRenderPassEncoderEnd(render);
         wgpuRenderPassEncoderRelease(render);
