@@ -288,9 +288,8 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
     WgpuHandle<WGPUTexture, wgpuTextureRelease> projection{
         wgpuDeviceCreateTexture(device, &projectionDesc)};
     require_handle(projection.get(), "projection texture");
-    WGPUTextureViewDescriptor projectionViewDesc{};
     WgpuHandle<WGPUTextureView, wgpuTextureViewRelease> projectionView{
-        wgpuTextureCreateView(projection.get(), &projectionViewDesc)};
+        wgpuTextureCreateView(projection.get(), nullptr)};
     require_handle(projectionView.get(), "projection texture view");
 
     WGPUShaderSourceWGSL visualSource{};
@@ -410,9 +409,8 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
         if (surfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
             surfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal)
             continue;
-        WGPUTextureViewDescriptor viewDesc{};
         WgpuHandle<WGPUTextureView, wgpuTextureViewRelease> view{
-            wgpuTextureCreateView(surfaceTexture.texture, &viewDesc)};
+            wgpuTextureCreateView(surfaceTexture.texture, nullptr)};
         wgpuTextureRelease(surfaceTexture.texture);
         require_handle(view.get(), "surface texture view");
 
