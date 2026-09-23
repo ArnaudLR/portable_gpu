@@ -139,7 +139,7 @@ int main(int, char **)
             return 1;
         }
         std::cout << "WGPU adapter: " << adapter.get() << std::endl;
-        inspectAdapter(adapter.get());
+        // inspectAdapter(adapter.get());
         auto device = adapter.request_device({});
         if (!device)
         {
@@ -147,7 +147,7 @@ int main(int, char **)
             return 1;
         }
         std::cout << "WebGPU device created successfully: " << device.get() << std::endl;
-        inspectDevice(device.get());
+        // inspectDevice(device.get());
         run_lbm_simulation(device.get());
     }
     catch (const std::exception &e)
