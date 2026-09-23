@@ -1,7 +1,6 @@
 // Minimal presentation shader. Kept separate from the projection compute shader
 // so its texture bind group is group 0 in a compact graphics pipeline layout.
 @group(0) @binding(0) var image: texture_2d<f32>;
-@group(0) @binding(1) var image_sampler: sampler;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
@@ -17,5 +16,8 @@ struct VertexOut {
 }
 
 @fragment fn fragment_main(input: VertexOut) -> @location(0) vec4<f32> {
-    return textureSample(image, image_sampler, vec2<f32>(input.uv.x, 1.0 - input.uv.y));
+    let size = textureDimensions(image);
+    let uv = vec2<f32>(input.uv.x, 1.0 - input.uv.y);
+    let pixel = min(vec2<u32>(uv * vec2<f32>(size)), size - vec2<u32>(1u));
+    return textureLoad(image, vec2<i32>(pixel), 0);
 }

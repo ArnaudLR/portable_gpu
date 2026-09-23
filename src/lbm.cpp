@@ -343,30 +343,28 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
         require_handle(g.get(),"projection bind group");return g;};
     auto projectGroupA=makeProjectGroup(populationsA.get()); auto projectGroupB=makeProjectGroup(populationsB.get());
 
-    std::array<WGPUBindGroupLayoutEntry,2> textureEntries{};
-    textureEntries[0].binding=0;textureEntries[0].visibility=WGPUShaderStage_Fragment;
-    textureEntries[0].texture.sampleType=WGPUTextureSampleType_Float;textureEntries[0].texture.viewDimension=WGPUTextureViewDimension_2D;
-    textureEntries[1].binding=1;textureEntries[1].visibility=WGPUShaderStage_Fragment;
-    textureEntries[1].sampler.type=WGPUSamplerBindingType_Filtering;
-    WGPUBindGroupLayoutDescriptor textureLayoutDesc{};textureLayoutDesc.entryCount=textureEntries.size();textureLayoutDesc.entries=textureEntries.data();
-    WgpuHandle<WGPUBindGroupLayout,wgpuBindGroupLayoutRelease> textureLayout{wgpuDeviceCreateBindGroupLayout(device,&textureLayoutDesc)};
-    WGPUSamplerDescriptor samplerDesc{};
-    samplerDesc.addressModeU = WGPUAddressMode_ClampToEdge;
-    samplerDesc.addressModeV = WGPUAddressMode_ClampToEdge;
-    samplerDesc.addressModeW = WGPUAddressMode_ClampToEdge;
-    samplerDesc.magFilter = WGPUFilterMode_Linear;
-    samplerDesc.minFilter = WGPUFilterMode_Linear;
-    samplerDesc.mipmapFilter = WGPUMipmapFilterMode_Nearest;
-    samplerDesc.lodMinClamp = 0.0F;
-    samplerDesc.lodMaxClamp = 1.0F;
-    samplerDesc.maxAnisotropy = 1;
-    WgpuHandle<WGPUSampler,wgpuSamplerRelease> sampler{wgpuDeviceCreateSampler(device,&samplerDesc)};
-    require_handle(sampler.get(), "projection sampler");
-    std::array<WGPUBindGroupEntry,2> textureGroupEntries{};
-    textureGroupEntries[0].binding=0;textureGroupEntries[0].textureView=projectionView.get();
-    textureGroupEntries[1].binding=1;textureGroupEntries[1].sampler=sampler.get();
-    WGPUBindGroupDescriptor textureGroupDesc{};textureGroupDesc.layout=textureLayout.get();textureGroupDesc.entryCount=2;textureGroupDesc.entries=textureGroupEntries.data();
-    WgpuHandle<WGPUBindGroup,wgpuBindGroupRelease> textureGroup{wgpuDeviceCreateBindGroup(device,&textureGroupDesc)};
+    WGPUBindGroupLayoutEntry textureEntry{};
+    textureEntry.binding = 0;
+    textureEntry.visibility = WGPUShaderStage_Fragment;
+    textureEntry.texture.sampleType = WGPUTextureSampleType_Float;
+    textureEntry.texture.viewDimension = WGPUTextureViewDimension_2D;
+    textureEntry.texture.multisampled = false;
+    WGPUBindGroupLayoutDescriptor textureLayoutDesc{};
+    textureLayoutDesc.entryCount = 1;
+    textureLayoutDesc.entries = &textureEntry;
+    WgpuHandle<WGPUBindGroupLayout,wgpuBindGroupLayoutRelease> textureLayout{
+        wgpuDeviceCreateBindGroupLayout(device, &textureLayoutDesc)};
+    require_handle(textureLayout.get(), "presentation bind group layout");
+    WGPUBindGroupEntry textureGroupEntry{};
+    textureGroupEntry.binding = 0;
+    textureGroupEntry.textureView = projectionView.get();
+    WGPUBindGroupDescriptor textureGroupDesc{};
+    textureGroupDesc.layout = textureLayout.get();
+    textureGroupDesc.entryCount = 1;
+    textureGroupDesc.entries = &textureGroupEntry;
+    WgpuHandle<WGPUBindGroup,wgpuBindGroupRelease> textureGroup{
+        wgpuDeviceCreateBindGroup(device, &textureGroupDesc)};
+    require_handle(textureGroup.get(), "presentation bind group");
 
     WGPUSurfaceCapabilities capabilities{}; wgpuSurfaceGetCapabilities(surface,adapter,&capabilities);
     if(capabilities.formatCount==0) throw std::runtime_error("Surface exposes no texture format");
