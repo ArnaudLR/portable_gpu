@@ -430,9 +430,12 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
         if (surfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
             surfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal)
             continue;
+        // Keep the acquired surface texture alive until after submission and
+        // presentation. A texture view does not retain its parent texture in
+        // wgpu-native.
+        WgpuHandle<WGPUTexture, wgpuTextureRelease> acquiredTexture{surfaceTexture.texture};
         WgpuHandle<WGPUTextureView, wgpuTextureViewRelease> view{
-            wgpuTextureCreateView(surfaceTexture.texture, nullptr)};
-        wgpuTextureRelease(surfaceTexture.texture);
+            wgpuTextureCreateView(acquiredTexture.get(), nullptr)};
         require_handle(view.get(), "surface texture view");
 
         WGPUCommandEncoderDescriptor encoderDesc{};
