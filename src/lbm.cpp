@@ -367,8 +367,21 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
     require_handle(textureGroup.get(), "presentation bind group");
 
     WGPUSurfaceCapabilities capabilities{}; wgpuSurfaceGetCapabilities(surface,adapter,&capabilities);
-    if(capabilities.formatCount==0) throw std::runtime_error("Surface exposes no texture format");
-    const WGPUTextureFormat surfaceFormat=capabilities.formats[0]; wgpuSurfaceCapabilitiesFreeMembers(capabilities);
+    if (capabilities.formatCount == 0)
+        throw std::runtime_error("Surface exposes no texture format");
+    // Prefer the basic non-sRGB BGRA target on Windows. In particular, do not
+    // blindly select the driver's first (often sRGB) format: some older Intel
+    // D3D12 drivers crash in shader compilation for that target.
+    WGPUTextureFormat surfaceFormat = capabilities.formats[0];
+    for (std::size_t i = 0; i < capabilities.formatCount; ++i)
+    {
+        if (capabilities.formats[i] == WGPUTextureFormat_BGRA8Unorm)
+        {
+            surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
+            break;
+        }
+    }
+    wgpuSurfaceCapabilitiesFreeMembers(capabilities);
     const WGPUBindGroupLayout renderLayouts[]={textureLayout.get()};
     WGPUPipelineLayoutDescriptor renderLayoutDesc{};renderLayoutDesc.bindGroupLayoutCount=1;renderLayoutDesc.bindGroupLayouts=renderLayouts;
     WgpuHandle<WGPUPipelineLayout,wgpuPipelineLayoutRelease> renderPipelineLayout{wgpuDeviceCreatePipelineLayout(device,&renderLayoutDesc)};
