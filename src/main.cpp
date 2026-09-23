@@ -141,7 +141,7 @@ int main(int, char **)
             glfwCreateWindow(960, 540, "LBM D3Q19 - GPU volume", nullptr, nullptr), &glfwDestroyWindow);
         if (!window)
             throw std::runtime_error("Failed to create the visualization window");
-        WGPUSurface surface = glfwGetWGPUSurface(gpu::Instance::get(), window.get());
+        WGPUSurface surface = glfwCreateWindowWGPUSurface(gpu::Instance::get(), window.get());
         if (!surface)
             throw std::runtime_error("Failed to create the WebGPU surface");
         WGPURequestAdapterOptions adapterOptions{};
