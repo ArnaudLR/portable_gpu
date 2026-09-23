@@ -4,6 +4,8 @@
 #include <iostream>
 #include <memory>
 #include <future>
+#include <string>
+#include <vector>
 
 namespace gpu = ame::gpu;
 
