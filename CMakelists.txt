@@ -10,8 +10,10 @@ add_subdirectory(WebGPU-distribution-wgpu-v24.0.0.2)
 add_executable(App 
     src/main.cpp 
     src/gpu.cpp
+    src/lbm.cpp
 )
 target_include_directories(App PRIVATE include)
+target_compile_definitions(App PRIVATE LBM_SHADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/src/lbm_kernels.wgsl")
 # Add the 'webgpu' target as a dependency of our App
 target_link_libraries(App PRIVATE webgpu)
 # The application's binary must find wgpu.dll or libwgpu.so at runtime,

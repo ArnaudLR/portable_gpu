@@ -1,5 +1,6 @@
 #include <webgpu/webgpu.h>
 #include <gpu.h>
+#include <lbm.h>
 #include <iostream>
 #include <memory>
 #include <future>
@@ -145,6 +146,7 @@ int main(int, char **)
         }
         std::cout << "WebGPU device created successfully: " << device.get() << std::endl;
         inspectDevice(device.get());
+        run_lbm_simulation(device.get());
     }
     catch (const std::exception &e)
     {
