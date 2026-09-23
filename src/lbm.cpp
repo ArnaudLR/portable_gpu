@@ -26,6 +26,9 @@
 #ifndef LBM_VISUAL_SHADER_PATH
 #define LBM_VISUAL_SHADER_PATH "src/visualization.wgsl"
 #endif
+#ifndef LBM_RENDER_SHADER_PATH
+#define LBM_RENDER_SHADER_PATH "src/visualization_render.wgsl"
+#endif
 
 namespace
 {
@@ -178,6 +181,7 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
     const auto initial = make_initial_populations();
     const auto shaderCode = load_shader(LBM_SHADER_PATH);
     const auto visualShaderCode = load_shader(LBM_VISUAL_SHADER_PATH);
+    const auto renderShaderCode = load_shader(LBM_RENDER_SHADER_PATH);
 
     WgpuHandle<WGPUQueue, wgpuQueueRelease> queue{wgpuDeviceGetQueue(device)};
     require_handle(queue.get(), "queue");
@@ -297,6 +301,14 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
     WgpuHandle<WGPUShaderModule, wgpuShaderModuleRelease> visualShader{
         wgpuDeviceCreateShaderModule(device, &visualShaderDesc)};
     require_handle(visualShader.get(), "visualization shader");
+    WGPUShaderSourceWGSL renderSource{};
+    renderSource.chain.sType = WGPUSType_ShaderSourceWGSL;
+    renderSource.code = WGPUStringView{renderShaderCode.data(), renderShaderCode.size()};
+    WGPUShaderModuleDescriptor renderShaderDesc{};
+    renderShaderDesc.nextInChain = &renderSource.chain;
+    WgpuHandle<WGPUShaderModule, wgpuShaderModuleRelease> renderShader{
+        wgpuDeviceCreateShaderModule(device, &renderShaderDesc)};
+    require_handle(renderShader.get(), "presentation shader");
 
     std::array<WGPUBindGroupLayoutEntry, 3> projectEntries{};
     projectEntries[0].binding=0; projectEntries[0].visibility=WGPUShaderStage_Compute;
@@ -350,12 +362,12 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
     WGPUSurfaceCapabilities capabilities{}; wgpuSurfaceGetCapabilities(surface,adapter,&capabilities);
     if(capabilities.formatCount==0) throw std::runtime_error("Surface exposes no texture format");
     const WGPUTextureFormat surfaceFormat=capabilities.formats[0]; wgpuSurfaceCapabilitiesFreeMembers(capabilities);
-    const WGPUBindGroupLayout renderLayouts[]={projectLayout.get(),textureLayout.get()};
-    WGPUPipelineLayoutDescriptor renderLayoutDesc{};renderLayoutDesc.bindGroupLayoutCount=2;renderLayoutDesc.bindGroupLayouts=renderLayouts;
+    const WGPUBindGroupLayout renderLayouts[]={textureLayout.get()};
+    WGPUPipelineLayoutDescriptor renderLayoutDesc{};renderLayoutDesc.bindGroupLayoutCount=1;renderLayoutDesc.bindGroupLayouts=renderLayouts;
     WgpuHandle<WGPUPipelineLayout,wgpuPipelineLayoutRelease> renderPipelineLayout{wgpuDeviceCreatePipelineLayout(device,&renderLayoutDesc)};
     WGPUColorTargetState target{};target.format=surfaceFormat;target.writeMask=WGPUColorWriteMask_All;
-    WGPUFragmentState fragment{};fragment.module=visualShader.get();fragment.entryPoint=WGPUStringView{"fragment_main",13};fragment.targetCount=1;fragment.targets=&target;
-    WGPURenderPipelineDescriptor renderDesc{};renderDesc.layout=renderPipelineLayout.get();renderDesc.vertex.module=visualShader.get();
+    WGPUFragmentState fragment{};fragment.module=renderShader.get();fragment.entryPoint=WGPUStringView{"fragment_main",13};fragment.targetCount=1;fragment.targets=&target;
+    WGPURenderPipelineDescriptor renderDesc{};renderDesc.layout=renderPipelineLayout.get();renderDesc.vertex.module=renderShader.get();
     renderDesc.vertex.entryPoint=WGPUStringView{"vertex_main",11};renderDesc.primitive.topology=WGPUPrimitiveTopology_TriangleList;
     renderDesc.primitive.frontFace=WGPUFrontFace_CCW;renderDesc.primitive.cullMode=WGPUCullMode_None;
     renderDesc.multisample.count=1;renderDesc.multisample.mask=~0u;renderDesc.fragment=&fragment;
@@ -439,7 +451,7 @@ void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surf
         renderDesc.colorAttachments = &attachment;
         WGPURenderPassEncoder render = wgpuCommandEncoderBeginRenderPass(encoder.get(), &renderDesc);
         wgpuRenderPassEncoderSetPipeline(render, renderPipeline.get());
-        wgpuRenderPassEncoderSetBindGroup(render, 1, textureGroup.get(), 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(render, 0, textureGroup.get(), 0, nullptr);
         wgpuRenderPassEncoderDraw(render, 3, 1, 0, 0);
         wgpuRenderPassEncoderEnd(render);
         wgpuRenderPassEncoderRelease(render);

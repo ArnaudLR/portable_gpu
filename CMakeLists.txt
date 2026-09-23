@@ -25,6 +25,7 @@ target_include_directories(App PRIVATE include)
 target_compile_definitions(App PRIVATE
     LBM_SHADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/src/lbm_kernels.wgsl"
     LBM_VISUAL_SHADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/src/visualization.wgsl"
+    LBM_RENDER_SHADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/src/visualization_render.wgsl"
 )
 # Add the 'webgpu' target as a dependency of our App
 target_link_libraries(App PRIVATE webgpu glfw glfw3webgpu)
