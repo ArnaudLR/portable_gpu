@@ -2,5 +2,7 @@
 
 #include <webgpu/webgpu.h>
 
-// Run the D3Q19 compute simulation on an already-created WebGPU device.
-void run_lbm_simulation(WGPUDevice device);
+struct GLFWwindow;
+
+// Simulate and render one GPU-only D3Q19 frame per iteration until the window closes.
+void run_lbm_simulation(WGPUDevice device, WGPUAdapter adapter, WGPUSurface surface, GLFWwindow* window);
