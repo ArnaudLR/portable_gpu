@@ -20,6 +20,7 @@ add_executable(App
     src/main.cpp 
     src/gpu.cpp
     src/lbm.cpp
+    src/inspector.cpp
 )
 target_include_directories(App PRIVATE include)
 target_compile_definitions(App PRIVATE
